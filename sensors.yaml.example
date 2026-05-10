@@ -1,0 +1,140 @@
+# sense-every-zone sensor registry.
+#
+# Copy to sensors.yaml (gitignored) and edit for your deployment.
+# SEZ_SENSORS_PATH env var overrides the search path.
+#
+# Each zone maps to one entry in ac-organic-lab/equipment.yaml
+# (adapter: http, status_path: /zones/<zone_id>/status).
+#
+# Hardware wiring (per node):
+#   PiSugar 3 extension interface (1.27 mm header, position 7) → SEN55 via
+#   Sensirion SEN5x Jumper Cable (Mouser 403-SEN5XJUMPERCABLE):
+#     5V   → SEN55 pin 1 VDD   (SEN55 is 5V-powered; has internal 3.3V reg)
+#     GND  → SEN55 pin 2 GND
+#     SDAT → SEN55 pin 3 SDA   (Pi GPIO2, I2C bus)
+#     SSCL → SEN55 pin 4 SCL   (Pi GPIO3, I2C bus)
+#     GND  → SEN55 pin 5 SEL   (pull to GND = I2C mode)
+#             SEN55 pin 6 NC    (leave floating)
+#
+# Driver values:
+#   mock             — synthesized readings; no hardware required (dev / CI)
+#   sen55            — Sensirion SEN55 / SparkFun DEV-21354 (I2C, T+RH+VOC+NOx+PM)
+#   alphasense_co_b4 — Alphasense CO-B4 via ISB + ADS1115 ADC (I2C, CO ppm)
+#   alphasense_ox    — Alphasense OX-B431 via ISB + ADS1115 ADC (I2C, O2 %)
+#   pisugar          — PiSugar 3 UPS via pisugar-server TCP socket (battery %)
+
+zones:
+
+  # ------------------------------------------------------------------
+  # Lab 499 West — pi-fumehood (100.64.254.100:8030)
+  # equipment.yaml: id: env_lab499_west
+  # ------------------------------------------------------------------
+  - id: env_lab499_west
+    display_name: "Lab 499 (West) Sensors"
+    poll_interval_s: 5
+    sensors:
+      - id: sen55_west
+        driver: sen55
+        i2c_bus: 1
+        # SEN55 fixed I2C address: 0x69
+
+      - id: pisugar_west
+        driver: pisugar
+        host: localhost            # pisugar-server runs on the same Pi
+        port: 8423
+        alert_thresholds:
+          battery_pct_low: 20     # warn when charge drops below 20 %
+
+  # ------------------------------------------------------------------
+  # Fume Hood — pi-fumehood (100.64.254.100:8030)
+  # Add to equipment.yaml as id: env_fumehood when ready.
+  # ------------------------------------------------------------------
+  - id: env_fumehood
+    display_name: "Fume Hood"
+    poll_interval_s: 5
+    sensors:
+      - id: sen55_hood
+        driver: sen55
+        i2c_bus: 1
+
+      # Alphasense CO-B4 via ADS1115 on the same I2C bus.
+      # Calibration coefficients from the certificate shipped with the sensor.
+      - id: co_hood
+        driver: alphasense_co_b4
+        ads1115_i2c_bus: 1
+        ads1115_address: 0x48    # ADDR pin → GND
+        channel_we: 0            # working electrode on AIN0
+        channel_ae: 1            # auxiliary electrode on AIN1
+        calibration:
+          we_zero_v: 0.346       # V — from calibration certificate
+          ae_zero_v: 0.347       # V — from calibration certificate
+          sensitivity_v_ppm: 0.000421  # V/ppm — from calibration certificate
+        alert_thresholds:
+          co_ppm: 25             # OSHA TWA is 50 ppm; warn at 25
+
+      # Alphasense OX-B431 via same ADS1115.
+      - id: o2_hood
+        driver: alphasense_ox
+        ads1115_i2c_bus: 1
+        ads1115_address: 0x48
+        channel_we: 2            # O2 working electrode on AIN2
+        calibration:
+          we_zero_v: 0.010       # V
+          sensitivity_v_percent: 0.0156  # V / % O2
+        alert_thresholds:
+          o2_percent_low: 19.5   # O2 deficiency threshold
+
+      - id: pisugar_hood
+        driver: pisugar
+        host: localhost
+        port: 8423
+        alert_thresholds:
+          battery_pct_low: 20
+
+  # ------------------------------------------------------------------
+  # Storage — pi-filter (100.64.254.104:8031)
+  # equipment.yaml: id: env_storage
+  # ------------------------------------------------------------------
+  - id: env_storage
+    display_name: "Storage"
+    poll_interval_s: 10
+    sensors:
+      - id: sen55_storage
+        driver: sen55
+        i2c_bus: 1
+
+      - id: pisugar_storage
+        driver: pisugar
+        host: localhost
+        port: 8423
+        alert_thresholds:
+          battery_pct_low: 20
+
+  # ------------------------------------------------------------------
+  # Sample Prep — pi-filter (100.64.254.104:8031)
+  # equipment.yaml: id: env_sample_prep
+  # ------------------------------------------------------------------
+  - id: env_sample_prep
+    display_name: "Sample Prep"
+    poll_interval_s: 5
+    sensors:
+      - id: sen55_prep
+        driver: sen55
+        i2c_bus: 1
+
+      - id: pisugar_prep
+        driver: pisugar
+        host: localhost
+        port: 8423
+        alert_thresholds:
+          battery_pct_low: 20
+
+  # ------------------------------------------------------------------
+  # Dev / CI — mock readings, no hardware
+  # ------------------------------------------------------------------
+  - id: env_mock
+    display_name: "Mock Zone (dev)"
+    poll_interval_s: 2
+    sensors:
+      - id: mock_all
+        driver: mock

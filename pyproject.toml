@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools >= 61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sense_every_zone"
+version = "0.1.0"
+description = "Environmental sensor nodes for the AC Organic Self-Driving Lab — STATUS_SPEC v1.0"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Yang Cao", email = "yangcyril.cao@utoronto.ca"}
+]
+dependencies = [
+    "PyYAML>=6.0",
+    "smbus2",
+]
+
+[project.optional-dependencies]
+# FastAPI service layer
+api = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+]
+# Raspberry Pi hardware drivers
+pi = [
+    "adafruit-blinka",
+    "adafruit-circuitpython-ads1x15",
+    "sensirion-i2c-driver",
+    "sensirion-i2c-sen5x",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "httpx",
+    "black",
+    "flake8",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -q"
+asyncio_mode = "auto"
+norecursedirs = ["docs", "*.egg-info"]
