@@ -4,17 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sense_every_zone"
-version = "0.1.0"
-description = "Environmental sensor nodes for the AC Organic Self-Driving Lab — STATUS_SPEC v1.0"
+version = "0.2.0"
+description = "Environmental sensor nodes for the AC Organic Self-Driving Lab — STATUS_SPEC v1.2"
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "Yang Cao", email = "yangcyril.cao@utoronto.ca"}
 ]
 dependencies = [
     "PyYAML>=6.0",
     "smbus2",
+    "sdl-lab-contract",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +43,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+sdl-lab-contract = { git = "https://github.com/AccelerationConsortium/sdl-lab-contract", tag = "v1.2.0" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

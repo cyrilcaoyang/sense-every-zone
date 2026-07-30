@@ -2,7 +2,7 @@
 
 Environmental sensor nodes for the AC Organic Self-Driving Lab.
 Exposes temperature, humidity, VOC, NOx, PM, CO, and O₂ readings as
-**STATUS_SPEC v1.0** HTTP endpoints, polled by the `ac-organic-lab`
+**STATUS_SPEC v1.2** HTTP endpoints, polled by the `ac-organic-lab`
 dashboard aggregator.
 
 ## Architecture
@@ -156,7 +156,7 @@ For each zone served by this process, add an entry in
     platform: lab
     kind: environmental_sensor
     adapter: http          # change from mock once deployed
-    protocol: "1.0"
+    protocol: "1.2"
     base_url: http://100.64.254.100:8030
     status_path: /zones/env_lab499_west/status
     poll_timeout_seconds: 8.0
@@ -170,7 +170,7 @@ For each zone served by this process, add an entry in
 | `GET /` | Identity probe |
 | `GET /health` | Service + sensor health |
 | `GET /zones` | List all zones (summary) |
-| `GET /zones/{zone_id}/status` | Full STATUS_SPEC v1.0 envelope |
+| `GET /zones/{zone_id}/status` | Full STATUS_SPEC v1.2 envelope |
 
 ## Alphasense calibration
 

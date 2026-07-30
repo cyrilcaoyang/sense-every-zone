@@ -1,4 +1,4 @@
-"""Tests for STATUS_SPEC v1.0 Pydantic models."""
+"""Tests for STATUS_SPEC v1.2 Pydantic models (sourced from sdl-lab-contract)."""
 
 from datetime import datetime, timezone
 
@@ -20,21 +20,44 @@ from sense_every_zone.api.models import (
 )
 
 
-def test_probe_response_defaults():
-    r = ProbeResponse()
+def test_probe_response_requires_identity():
+    """v1.2 ProbeResponse requires equipment_id and equipment_name."""
+    r = ProbeResponse(
+        equipment_id="sense_every_zone",
+        equipment_name="Sense Every Zone",
+        protocol_version=PROTOCOL_VERSION,
+    )
     assert r.protocol_version == PROTOCOL_VERSION
-    assert r.kind == EQUIPMENT_KIND
+    assert r.equipment_id == "sense_every_zone"
+
+
+def test_probe_response_defaults_protocol_version():
+    """ProbeResponse without explicit protocol_version defaults to '1.0' (contract default)."""
+    r = ProbeResponse(equipment_id="x", equipment_name="Y")
+    assert r.protocol_version == "1.0"
 
 
 def test_equipment_status_valid_states():
     for state in ("ready", "degraded", "error", "unknown"):
-        s = EquipmentStatus(equipment_id="env_test", equipment_name="Test", state=state)
-        assert s.state == state
+        s = EquipmentStatus(
+            equipment_id="env_test",
+            equipment_name="Test",
+            equipment_kind=EQUIPMENT_KIND,
+            equipment_status=state,
+            device_time=datetime.now(timezone.utc),
+        )
+        assert s.equipment_status == state
 
 
 def test_equipment_status_invalid_state():
     with pytest.raises(ValidationError):
-        EquipmentStatus(equipment_id="env_test", equipment_name="Test", state="flying")
+        EquipmentStatus(
+            equipment_id="env_test",
+            equipment_name="Test",
+            equipment_kind=EQUIPMENT_KIND,
+            equipment_status="flying",
+            device_time=datetime.now(timezone.utc),
+        )
 
 
 def test_equipment_status_metrics_populated():
@@ -42,7 +65,9 @@ def test_equipment_status_metrics_populated():
     s = EquipmentStatus(
         equipment_id="env_test",
         equipment_name="Test Zone",
-        state="ready",
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status="ready",
+        device_time=ts,
         metrics={
             "temperature_c": MetricValue(value=22.4, unit="°C", timestamp=ts),
             "co_ppm": MetricValue(value=3.1, unit="ppm", timestamp=ts),
@@ -50,6 +75,60 @@ def test_equipment_status_metrics_populated():
     )
     assert s.metrics["temperature_c"].value == 22.4
     assert s.metrics["co_ppm"].unit == "ppm"
+
+
+def test_equipment_status_details_is_dict():
+    """v1.2 details is dict[str, Any], not a typed model."""
+    ts = datetime.now(timezone.utc)
+    s = EquipmentStatus(
+        equipment_id="env_test",
+        equipment_name="Test Zone",
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status="ready",
+        device_time=ts,
+        details={"zone": {"zone_id": "env_test"}},
+    )
+    assert isinstance(s.details, dict)
+    assert s.details["zone"]["zone_id"] == "env_test"
+
+
+def test_equipment_status_last_error_single():
+    """v1.2 replaces errors: List[ErrorInfo] with last_error: ErrorInfo | None."""
+    ts = datetime.now(timezone.utc)
+    err = ErrorInfo(message="test", severity="critical", timestamp=ts)
+    s = EquipmentStatus(
+        equipment_id="env_test",
+        equipment_name="Test",
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status="error",
+        device_time=ts,
+        last_error=err,
+    )
+    assert s.last_error is not None
+    assert s.last_error.message == "test"
+    # default is None
+    s2 = EquipmentStatus(
+        equipment_id="env_test",
+        equipment_name="Test",
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status="ready",
+        device_time=ts,
+    )
+    assert s2.last_error is None
+
+
+def test_equipment_status_activity_defaults():
+    """v1.2 activity defaults to 'unknown', activity_since to None."""
+    s = EquipmentStatus(
+        equipment_id="env_test",
+        equipment_name="Test",
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status="ready",
+        device_time=datetime.now(timezone.utc),
+    )
+    assert s.activity == "unknown"
+    assert s.activity_since is None
+    assert s.allowed_actions == []
 
 
 def test_sensor_reading_nullable_fields():
@@ -74,10 +153,17 @@ def test_senz_zone_details():
 
 
 def test_error_info_severity_validation():
-    e = ErrorInfo(message="test", severity="critical")
+    ts = datetime.now(timezone.utc)
+    e = ErrorInfo(message="test", severity="critical", timestamp=ts)
     assert e.severity == "critical"
     with pytest.raises(ValidationError):
-        ErrorInfo(message="test", severity="catastrophic")
+        ErrorInfo(message="test", severity="catastrophic", timestamp=ts)
+
+
+def test_error_info_requires_timestamp():
+    """v1.2 ErrorInfo requires a timestamp field."""
+    with pytest.raises(ValidationError):
+        ErrorInfo(message="test", severity="critical")  # missing timestamp
 
 
 def test_zone_summary():
@@ -92,6 +178,7 @@ def test_zone_summary():
 
 
 def test_health_response_ok():
+    """Local HealthResponse (ZoneHealthResponse) requires ok, has dependencies."""
     r = HealthResponse(ok=True)
     assert r.ok is True
     assert r.dependencies == []

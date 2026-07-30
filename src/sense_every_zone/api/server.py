@@ -1,14 +1,14 @@
 """
-sense_every_zone FastAPI server — STATUS_SPEC v1.0.
+sense_every_zone FastAPI server — STATUS_SPEC v1.2.
 
 Endpoints
 ---------
 GET  /                              ProbeResponse
-GET  /health                        HealthResponse
+GET  /health                        HealthResponse (contract) + per-zone detail
 GET  /zones                         list[ZoneSummary]
 GET  /zones/{zone_id}/status        EquipmentStatus  (polled by aggregator)
 
-Each zone has its own STATUS_SPEC v1.0 envelope accessible at
+Each zone has its own STATUS_SPEC v1.2 envelope accessible at
 ``/zones/{zone_id}/status``.  This matches the equipment.yaml pattern:
 
     - id: env_lab499_west
@@ -27,6 +27,7 @@ Or via env vars:
 from __future__ import annotations
 
 import logging
+import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ from fastapi.responses import JSONResponse
 
 from .logging_config import configure as _configure_logging
 from .models import (
+    EQUIPMENT_KIND,
+    PROTOCOL_VERSION,
     BatteryStatus,
     ComponentStatus,
     DependencyHealth,
@@ -54,11 +57,18 @@ from ..registry import SensorRegistry, ZoneSnapshot
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Service identity (for ProbeResponse)
+# ---------------------------------------------------------------------------
+
+_SERVICE_ID = "sense_every_zone"
+_SERVICE_NAME = "Sense Every Zone"
+
+# ---------------------------------------------------------------------------
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
 _registry: SensorRegistry | None = None
-
+_started_at: float = time.monotonic()
 
 # ---------------------------------------------------------------------------
 # App lifespan
@@ -92,8 +102,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Sense Every Zone",
-    description="Environmental sensor nodes — STATUS_SPEC v1.0",
-    version="1.0",
+    description="Environmental sensor nodes — STATUS_SPEC v1.2",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -135,7 +145,11 @@ async def _runtime_error(request: Request, exc: RuntimeError):
 @app.get("/", response_model=ProbeResponse)
 async def probe():
     """Minimal identity probe — always 200."""
-    return ProbeResponse()
+    return ProbeResponse(
+        equipment_id=_SERVICE_ID,
+        equipment_name=_SERVICE_NAME,
+        protocol_version=PROTOCOL_VERSION,
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -167,7 +181,10 @@ async def health():
                     message=f"{snap.healthy_count}/{snap.total_count} sensors healthy",
                 ))
 
-    return HealthResponse(ok=ok, dependencies=deps)
+    return HealthResponse(
+        ok=ok,
+        dependencies=deps,
+    )
 
 
 @app.get("/zones", response_model=List[ZoneSummary])
@@ -202,7 +219,7 @@ async def list_zones():
 
 @app.get("/zones/{zone_id}/status", response_model=EquipmentStatus)
 async def zone_status(zone_id: str):
-    """Full STATUS_SPEC v1.0 envelope for one zone — polled by aggregator."""
+    """Full STATUS_SPEC v1.2 envelope for one zone — polled by aggregator."""
     if _registry is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -224,15 +241,15 @@ async def zone_status(zone_id: str):
 def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
     # --- state ---
     if snap.total_count == 0 or (snap.polled_at == 0):
-        state = "unknown"
+        equip_state = "unknown"
     elif not snap.any_healthy:
-        state = "error"
+        equip_state = "error"
     elif not snap.all_healthy:
-        state = "degraded"
+        equip_state = "degraded"
     elif snap.active_alerts:
-        state = "degraded"
+        equip_state = "degraded"
     else:
-        state = "ready"
+        equip_state = "ready"
 
     # --- components (one per sensor) ---
     components: dict[str, ComponentStatus] = {}
@@ -269,24 +286,27 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
         if r.battery_voltage_v is not None:
             metrics["battery_voltage_v"] = MetricValue(value=r.battery_voltage_v, unit="V", timestamp=ts)
 
-    # --- errors / alerts ---
-    errors: list[ErrorInfo] = []
+    # --- last_error (single ErrorInfo or None) ---
+    last_error: ErrorInfo | None = None
     for alert in snap.active_alerts:
         # "CO_HIGH:34.20" → severity based on prefix
         code = alert.split(":")[0]
         is_critical = code in ("CO_HIGH", "O2_LOW", "H2_HIGH")
         is_warning = code in ("BATTERY_LOW",)
-        errors.append(ErrorInfo(
+        last_error = ErrorInfo(
             code=code,
             message=alert,
             severity="critical" if is_critical else ("warning" if is_warning else "error"),
-        ))
-    if state == "error":
-        errors.append(ErrorInfo(
+            timestamp=ts,
+        )
+        break  # last_error holds the first active alert
+    if equip_state == "error" and last_error is None:
+        last_error = ErrorInfo(
             code="SENSOR_FAILURE",
             message=f"0/{snap.total_count} sensors returning readings",
             severity="error",
-        ))
+            timestamp=ts,
+        )
 
     # --- battery (extracted from pisugar reading, if present) ---
     battery: BatteryStatus | None = None
@@ -300,11 +320,11 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
             )
             break  # only one pisugar per zone
 
-    # --- details (structured per-sensor readings) ---
+    # --- details (structured per-sensor readings, nested in dict) ---
     sensor_readings = [
         SensorReading(
             sensor_id=r.sensor_id,
-            timestamp=datetime.fromtimestamp(r.timestamp, tz=timezone.utc),
+            timestamp=datetime.fromtimestamp(r.timestamp, tz=timezone.utc).isoformat(),
             temperature_c=r.temperature_c,
             humidity_rh=r.humidity_rh,
             voc_index=r.voc_index,
@@ -320,7 +340,7 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
         for r in snap.readings
         if r.battery_pct is None   # exclude pisugar reading from sensor_readings list
     ]
-    details = SenzZoneDetails(
+    senz_zone_details = SenzZoneDetails(
         zone_id=snap.zone_id,
         display_name=snap.display_name,
         sensor_readings=sensor_readings,
@@ -328,15 +348,33 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
         battery=battery,
     )
 
+    # --- activity (v1.2) ---
+    if snap.polled_at == 0:
+        activity = "unknown"
+        activity_since = None
+    else:
+        activity = "idle"
+        activity_since = ts
+
+    now = datetime.now(timezone.utc)
+    uptime = time.monotonic() - _started_at
+
     return EquipmentStatus(
+        protocol_version=PROTOCOL_VERSION,
         equipment_id=snap.zone_id,
         equipment_name=snap.display_name,
-        state=state,
-        timestamp=ts,
+        equipment_kind=EQUIPMENT_KIND,
+        equipment_status=equip_state,
+        activity=activity,
+        activity_since=activity_since,
+        device_time=now,
+        uptime_seconds=uptime,
+        host=socket.gethostname(),
         components=components,
         metrics=metrics,
-        errors=errors,
-        details=details,
+        last_error=last_error,
+        allowed_actions=[],  # read-only device — no control endpoints
+        details={"zone": senz_zone_details.model_dump(mode="json")},
     )
 
 
