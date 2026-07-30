@@ -37,6 +37,19 @@ zones:
         driver: sen55
         i2c_bus: 1
         # SEN55 fixed I2C address: 0x69
+        # Temperature offset compensation (applied on every boot, volatile on sensor)
+        # temp_offset_c: -1.5         # °C — measure against a trusted reference
+        # temp_offset_slope: 0.0      # leave 0 unless error scales with temp
+        # Auto fan-clean interval (seconds). 0 = disabled.
+        # fan_clean_interval_s: 604800  # weekly (7 days)
+        alert_thresholds:
+          pm25_high: 35            # µg/m³ — EPA PM2.5 24-hr limit
+          pm10_high: 150           # µg/m³ — EPA PM10 24-hr limit
+          voc_high: 300            # Sensirion VOC index 1–500
+          temp_high: 35            # °C
+          temp_low: 10             # °C
+          humidity_high: 80        # %RH
+          humidity_low: 20         # %RH
 
       - id: pisugar_west
         driver: pisugar
@@ -56,6 +69,15 @@ zones:
       - id: sen55_hood
         driver: sen55
         i2c_bus: 1
+        # temp_offset_c: -1.5
+        alert_thresholds:
+          pm25_high: 35
+          pm10_high: 150
+          voc_high: 300
+          temp_high: 35
+          temp_low: 10
+          humidity_high: 80
+          humidity_low: 20
 
       # Alphasense CO-B4 via ADS1115 on the same I2C bus.
       # Calibration coefficients from the certificate shipped with the sensor.
@@ -111,14 +133,14 @@ zones:
           battery_pct_low: 20
 
   # ------------------------------------------------------------------
-  # Sample Prep — pi-filter (100.64.254.104:8031)
-  # equipment.yaml: id: env_sample_prep
+  # HTE — pi-hte (100.64.254.151:8030)
+  # equipment.yaml: id: env_hte
   # ------------------------------------------------------------------
-  - id: env_sample_prep
-    display_name: "Sample Prep"
+  - id: env_hte
+    display_name: "HTE"
     poll_interval_s: 5
     sensors:
-      - id: sen55_prep
+      - id: sen55_hte
         driver: sen55
         i2c_bus: 1
 

@@ -16,7 +16,7 @@ sense-every-zone (FastAPI :8030)
         ├── Zone: env_lab499_west  ── SEN55 (T/RH/VOC/NOx/PM)
         ├── Zone: env_fumehood     ── SEN55 + CO-B4 + OX-B431
         ├── Zone: env_storage      ── SEN55
-        └── Zone: env_sample_prep  ── SEN55
+        └── Zone: env_hte        ── SEN55
 ```
 
 One process per Pi host; zones are configured in `sensors.yaml`.
@@ -25,7 +25,7 @@ One process per Pi host; zones are configured in `sensors.yaml`.
 
 | Driver | Hardware | Measurements |
 |--------|----------|--------------|
-| `sen55` | Sensirion SEN55 module (`SEN55-SDN-T`) | T, RH, VOC index, NOx index, PM1/2.5/4/10 |
+| `sen55` | Sensirion SEN55 module (`SEN55-SDN-T`) — raw smbus2 driver | T, RH, VOC index, NOx index, PM1/2.5/4/10 |
 | `alphasense_co_b4` | Alphasense CO-B4 + ISB + ADS1115 | CO ppm |
 | `alphasense_ox` | Alphasense OX-B431 + ISB + ADS1115 | O₂ % |
 | `pisugar` | PiSugar 3 (via pisugar-server daemon) | battery %, charging, voltage |

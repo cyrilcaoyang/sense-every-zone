@@ -29,8 +29,7 @@ api = [
 pi = [
     "adafruit-blinka",
     "adafruit-circuitpython-ads1x15",
-    "sensirion-i2c-driver",
-    "sensirion-i2c-sen5x",
+    # SEN55 uses raw smbus2 transactions — no Sensirion SDK needed
 ]
 dev = [
     "pytest",

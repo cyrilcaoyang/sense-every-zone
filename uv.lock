@@ -344,7 +344,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -921,8 +921,6 @@ dev = [
 pi = [
     { name = "adafruit-blinka" },
     { name = "adafruit-circuitpython-ads1x15" },
-    { name = "sensirion-i2c-driver" },
-    { name = "sensirion-i2c-sen5x" },
 ]
 
 [package.metadata]
@@ -939,33 +937,10 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sdl-lab-contract", git = "https://github.com/AccelerationConsortium/sdl-lab-contract?tag=v1.2.0" },
-    { name = "sensirion-i2c-driver", marker = "extra == 'pi'" },
-    { name = "sensirion-i2c-sen5x", marker = "extra == 'pi'" },
     { name = "smbus2" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.29" },
 ]
 provides-extras = ["api", "pi", "dev"]
-
-[[package]]
-name = "sensirion-i2c-driver"
-version = "1.0.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d1/e7/025ff70b233d784a39d6b1928812661e2a59bc2998e43c6ed15008c414cf/sensirion_i2c_driver-1.0.2.tar.gz", hash = "sha256:b093a664496cedd926c58e1f14a5fee6fb5926ba4e625bdb3a4dbed122251787", size = 29853, upload-time = "2025-11-25T09:52:52.501Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/c1/9c81bb13af8cc50f5e710841dfce43d2b7858804f9a955e9481df5e8b3f2/sensirion_i2c_driver-1.0.2-py3-none-any.whl", hash = "sha256:a03827ac2631de7f5fa7453e0d68e8daef011eef53d830710688016f828abec8", size = 16423, upload-time = "2025-11-25T09:52:51.368Z" },
-]
-
-[[package]]
-name = "sensirion-i2c-sen5x"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sensirion-i2c-driver" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a9/d0/714e44afeacd69fb5d3cbda59a1aa8985dbdba33df936b698d5063054577/sensirion-i2c-sen5x-0.1.1.tar.gz", hash = "sha256:c1967fd63e179cbf55099fa7c6eb8ca7c3e79dd7cc8868a1c63660ae7bbf3992", size = 19022, upload-time = "2022-02-15T17:23:40.915Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/6d/33f311ab021a2f8af7bd2f0506350ff293f1371a010b55f6142262325e2d/sensirion_i2c_sen5x-0.1.1-py3-none-any.whl", hash = "sha256:3d6a57284acaf5673c4eb469b7cf6015838df51d6ef1197345f52376e5e7843c", size = 23001, upload-time = "2022-02-15T17:23:39.354Z" },
-]
 
 [[package]]
 name = "smbus2"

@@ -275,8 +275,14 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
             metrics["voc_index"] = MetricValue(value=r.voc_index, unit="index", timestamp=ts)
         if r.nox_index is not None:
             metrics["nox_index"] = MetricValue(value=r.nox_index, unit="index", timestamp=ts)
+        if r.pm1_ug_m3 is not None:
+            metrics["pm1_ug_m3"] = MetricValue(value=r.pm1_ug_m3, unit="µg/m³", timestamp=ts)
         if r.pm25_ug_m3 is not None:
             metrics["pm25_ug_m3"] = MetricValue(value=r.pm25_ug_m3, unit="µg/m³", timestamp=ts)
+        if r.pm4_ug_m3 is not None:
+            metrics["pm4_ug_m3"] = MetricValue(value=r.pm4_ug_m3, unit="µg/m³", timestamp=ts)
+        if r.pm10_ug_m3 is not None:
+            metrics["pm10_ug_m3"] = MetricValue(value=r.pm10_ug_m3, unit="µg/m³", timestamp=ts)
         if r.co_ppm is not None:
             metrics["co_ppm"] = MetricValue(value=r.co_ppm, unit="ppm", timestamp=ts)
         if r.o2_percent is not None:
@@ -291,8 +297,12 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
     for alert in snap.active_alerts:
         # "CO_HIGH:34.20" → severity based on prefix
         code = alert.split(":")[0]
-        is_critical = code in ("CO_HIGH", "O2_LOW", "H2_HIGH")
-        is_warning = code in ("BATTERY_LOW",)
+        is_critical = code in ("CO_HIGH", "O2_LOW", "H2_HIGH", "SEN55_DEVICE_FAULT")
+        is_warning = code in (
+            "BATTERY_LOW", "PM25_HIGH", "PM10_HIGH",
+            "VOC_HIGH", "NOX_HIGH", "TEMP_HIGH", "TEMP_LOW",
+            "HUMIDITY_HIGH", "HUMIDITY_LOW",
+        )
         last_error = ErrorInfo(
             code=code,
             message=alert,
