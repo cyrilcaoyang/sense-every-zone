@@ -17,11 +17,12 @@
 #             SEN55 pin 6 NC    (leave floating)
 #
 # Driver values:
-#   mock             — synthesized readings; no hardware required (dev / CI)
-#   sen55            — Sensirion SEN55 / SparkFun DEV-21354 (I2C, T+RH+VOC+NOx+PM)
+#   mock              — synthesized readings; no hardware required (dev / CI)
+#   sen55             — Sensirion SEN55 / SparkFun DEV-21354 (I2C, T+RH+VOC+NOx+PM)
 #   alphasense_co_b4 — Alphasense CO-B4 via ISB + ADS1115 ADC (I2C, CO ppm)
 #   alphasense_ox    — Alphasense OX-B431 via ISB + ADS1115 ADC (I2C, O2 %)
 #   pisugar          — PiSugar 3 UPS via pisugar-server TCP socket (battery %)
+#   waveshare_ups_c  — Waveshare UPS HAT (C) via INA219 I2C registers (battery %)
 
 zones:
 
@@ -144,10 +145,12 @@ zones:
         driver: sen55
         i2c_bus: 1
 
-      - id: pisugar_prep
-        driver: pisugar
-        host: localhost
-        port: 8423
+      # Waveshare UPS HAT (C) — INA219 at I2C 0x43.
+      # Battery % derived from bus voltage: (Vbus - 3.0) / 1.2 * 100.
+      - id: ups_hte
+        driver: waveshare_ups_c
+        i2c_bus: 1
+        i2c_address: 0x43
         alert_thresholds:
           battery_pct_low: 20
 

@@ -29,6 +29,7 @@ One process per Pi host; zones are configured in `sensors.yaml`.
 | `alphasense_co_b4` | Alphasense CO-B4 + ISB + ADS1115 | CO ppm |
 | `alphasense_ox` | Alphasense OX-B431 + ISB + ADS1115 | O₂ % |
 | `pisugar` | PiSugar 3 (via pisugar-server daemon) | battery %, charging, voltage |
+| `waveshare_ups_c` | Waveshare UPS HAT (C) (INA219 at 0x43) | battery %, voltage |
 | `mock` | — | Synthesized readings (dev / CI) |
 
 ## Node design
@@ -77,6 +78,7 @@ I2C address map (all distinct, verified conflict-free):
 | ADS1115 | `0x48` | ADDR pin → GND |
 | PiSugar 3 MCU | `0x57` | battery stats |
 | PiSugar 3 RTC | `0x68` | ds3231-compatible |
+| Waveshare UPS HAT C (INA219) | `0x43` | battery voltage/current |
 
 ## Bill of Materials
 

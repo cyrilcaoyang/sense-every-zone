@@ -66,6 +66,11 @@ def _driver_map() -> dict:
         drivers["pisugar"] = PiSugar3Sensor
     except ImportError:
         pass
+    try:
+        from .drivers.waveshare_ups_c import WaveshareUPSCSensor
+        drivers["waveshare_ups_c"] = WaveshareUPSCSensor
+    except ImportError:
+        pass
     return drivers
 
 
