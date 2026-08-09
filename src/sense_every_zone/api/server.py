@@ -238,6 +238,35 @@ async def zone_status(zone_id: str):
 # Status builder
 # ---------------------------------------------------------------------------
 
+#: `RawReading` attribute → (`metrics` key, unit).
+#:
+#: Metric keys carry **no unit suffix** — STATUS_SPEC best practice #5 puts the
+#: unit in `MetricValue.unit`, not in the field name, so a reader never has to
+#: parse a key to learn what it measures. The suffixed names (`temperature_c`,
+#: `pm25_ug_m3`, …) stay on `RawReading` / `SensorReading`, which are internal
+#: driver records surfaced under `details` — #5 explicitly permits that.
+#:
+#: These keys are the contract the dashboard reads: `web/.../LabMap.tsx` renders
+#: `temperature` / `humidity` / `o2` / `voc`, and `api/app/main.py` records a
+#: curated subset into `sensor_readings`. Renaming one is a breaking change for
+#: both, so change them together or not at all.
+_METRIC_MAP: tuple[tuple[str, str, str], ...] = (
+    ("temperature_c",     "temperature",     "°C"),
+    ("humidity_rh",       "humidity",        "%RH"),
+    ("voc_index",         "voc",             "index"),
+    ("nox_index",         "nox",             "index"),
+    ("pm1_ug_m3",         "pm1",             "µg/m³"),
+    ("pm25_ug_m3",        "pm25",            "µg/m³"),
+    ("pm4_ug_m3",         "pm4",             "µg/m³"),
+    ("pm10_ug_m3",        "pm10",            "µg/m³"),
+    ("co_ppm",            "co",              "ppm"),
+    ("o2_percent",        "o2",              "%"),
+    ("h2_ppm",            "h2",              "ppm"),
+    ("battery_pct",       "battery",         "%"),
+    ("battery_voltage_v", "battery_voltage", "V"),
+)
+
+
 def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
     # --- state ---
     if snap.total_count == 0 or (snap.polled_at == 0):
@@ -267,30 +296,10 @@ def _build_status(snap: ZoneSnapshot) -> EquipmentStatus:
     metrics: dict[str, MetricValue] = {}
     ts = datetime.fromtimestamp(snap.polled_at, tz=timezone.utc)
     for r in snap.readings:
-        if r.temperature_c is not None:
-            metrics["temperature_c"] = MetricValue(value=r.temperature_c, unit="°C", timestamp=ts)
-        if r.humidity_rh is not None:
-            metrics["humidity_rh"] = MetricValue(value=r.humidity_rh, unit="%RH", timestamp=ts)
-        if r.voc_index is not None:
-            metrics["voc_index"] = MetricValue(value=r.voc_index, unit="index", timestamp=ts)
-        if r.nox_index is not None:
-            metrics["nox_index"] = MetricValue(value=r.nox_index, unit="index", timestamp=ts)
-        if r.pm1_ug_m3 is not None:
-            metrics["pm1_ug_m3"] = MetricValue(value=r.pm1_ug_m3, unit="µg/m³", timestamp=ts)
-        if r.pm25_ug_m3 is not None:
-            metrics["pm25_ug_m3"] = MetricValue(value=r.pm25_ug_m3, unit="µg/m³", timestamp=ts)
-        if r.pm4_ug_m3 is not None:
-            metrics["pm4_ug_m3"] = MetricValue(value=r.pm4_ug_m3, unit="µg/m³", timestamp=ts)
-        if r.pm10_ug_m3 is not None:
-            metrics["pm10_ug_m3"] = MetricValue(value=r.pm10_ug_m3, unit="µg/m³", timestamp=ts)
-        if r.co_ppm is not None:
-            metrics["co_ppm"] = MetricValue(value=r.co_ppm, unit="ppm", timestamp=ts)
-        if r.o2_percent is not None:
-            metrics["o2_percent"] = MetricValue(value=r.o2_percent, unit="%", timestamp=ts)
-        if r.battery_pct is not None:
-            metrics["battery_pct"] = MetricValue(value=r.battery_pct, unit="%", timestamp=ts)
-        if r.battery_voltage_v is not None:
-            metrics["battery_voltage_v"] = MetricValue(value=r.battery_voltage_v, unit="V", timestamp=ts)
+        for attr, key, unit in _METRIC_MAP:
+            value = getattr(r, attr, None)
+            if value is not None:
+                metrics[key] = MetricValue(value=value, unit=unit, timestamp=ts)
 
     # --- last_error (single ErrorInfo or None) ---
     last_error: ErrorInfo | None = None
