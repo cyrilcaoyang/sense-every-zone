@@ -131,6 +131,17 @@ uvicorn sense_every_zone.api.server:app --host 0.0.0.0 --port 8030 \
     --reload --reload-include "*.yaml"
 ```
 
+## Remote access & node reliability
+
+Deployed nodes are headless Pis on the tailnet, operated from the central
+server — including by coding agents (Hermes / Claude Code) that need
+non-interactive SSH for diagnostics and deploys. The access model
+(dedicated key, per-node Host alias, agent ground rules) and the
+network-reliability provisioning every node needs (Wi-Fi power-save off,
+keepalive, persistent journal — learned from the 2026-08-08 nightly-
+unreachability incident on `environ-01`) live in
+[`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md).
+
 ## sensors.yaml
 
 Gitignored. Copy from `sensors.yaml.example` and fill in your zone IDs,
