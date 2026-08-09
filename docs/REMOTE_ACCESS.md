@@ -7,19 +7,36 @@ them for diagnostics and deploys: the 2026-08-08 nightly-unreachability
 investigation and the pending metric-rename deploy both required exactly
 this. This document is the durable recipe.
 
-## Access model
+## Access model — Tailscale SSH (what the nodes actually run)
 
-- **From:** the `sdl2` user on the central server only. Agents inherit that
-  identity; no per-agent accounts.
-- **Key:** the dedicated `~/.ssh/id_ed25519_lab_pi` keypair on the central
-  server (comment `lab-agents@sdl2-server-gaia`). Deliberately NOT the
-  shared git key — this one can be revoked by deleting a single
-  `authorized_keys` line on each Pi without touching anything else.
-- **To:** the `sdl2` user on each Pi, over the tailnet (MagicDNS name).
-  Tailscale ACLs remain the outer gate, as everywhere in this lab.
+Discovered during enrollment (2026-08-08): the sensor Pis run **Tailscale
+SSH** — `tailscaled` intercepts tailnet connections to port 22 and
+authenticates by **tailnet identity + ACL**, not `authorized_keys`. A
+key-copy attempt fails with `tailnet policy does not permit you to SSH to
+this node`; a permitted identity gets a shell with no password. So access
+is granted in the tailnet policy file, not on the node:
+
+```json
+"ssh": [
+  {
+    "action": "accept",
+    "src":    ["tag:sdl2-server-gaia"],
+    "dst":    ["tag:sdl2-devices"],
+    "users":  ["sdl2"]
+  }
+]
+```
+
+- **`action: "accept"`**, not `"check"` — `check` demands a browser
+  re-auth, which a non-interactive agent can never complete.
+- **Scope:** `dst: tag:sdl2-devices` spans all tagged devices, but only
+  nodes running the Tailscale SSH server honor it (the Linux Pis; Windows
+  device PCs cannot serve Tailscale SSH) — so in practice this grants
+  central-server → sensor-node access as `sdl2`, which is the intent.
+- **Revocation:** delete the ACL block. Nothing to clean up on any node.
 - **Alias:** `~/.ssh/config` on the central server defines one Host alias
   per node (`environ-01`, …) with `BatchMode yes` + `ConnectTimeout 8`, so a
-  non-interactive agent fails fast instead of hanging on a password prompt.
+  non-interactive agent fails fast instead of hanging if policy denies it.
 
 ```
 Host environ-01
@@ -33,28 +50,13 @@ Host environ-01
 
 ## Enrolling a node (once per Pi)
 
-1. On the central server (skip if the key exists):
-
-   ```bash
-   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_lab_pi -N "" \
-       -C "lab-agents@sdl2-server-gaia (hermes/claude CLI access to sensor pis)"
-   ssh-keyscan -H <pi-magicdns-name> >> ~/.ssh/known_hosts
-   ```
-
-2. Install the public key on the Pi — the one step that needs a human
-   (password). Either `ssh-copy-id`:
-
-   ```bash
-   ssh-copy-id -i ~/.ssh/id_ed25519_lab_pi.pub sdl2@<pi-magicdns-name>
-   ```
-
-   or, hardened: append to `~/.ssh/authorized_keys` on the Pi with a
-   source restriction so the key works only from the central server —
-
-   ```
-   from="100.64.254.6" ssh-ed25519 AAAA… lab-agents@sdl2-server-gaia
-   ```
-
+1. Confirm the node runs Tailscale SSH (they are provisioned that way):
+   `tailscale whois <pi-tailnet-ip>` from the server shows its tags;
+   an SSH attempt without policy fails with the distinctive
+   `tailnet policy does not permit you to SSH to this node`.
+2. Ensure the ACL block above exists in the tailnet policy (admin
+   console → Access Controls). Adding a node needs **no** policy change
+   as long as it carries `tag:sdl2-devices`.
 3. Add the Host alias to the central server's `~/.ssh/config` (copy the
    block above, adjust the name), then verify non-interactively:
 
@@ -62,16 +64,15 @@ Host environ-01
    ssh environ-01 true && echo OK
    ```
 
-Password auth stays enabled or not at the operator's discretion — the
-agents never use it (BatchMode). If you disable it (`PasswordAuthentication
-no` in `sshd_config`), keep a console/keyboard recovery path in mind: these
-are headless Pi Zeros.
-
-> **Alternative considered:** Tailscale SSH (`tailscale up --ssh` + ACL
-> `ssh` rules) removes key management entirely. Not adopted for now — the
-> lab's tailnet ACLs are managed coarsely, and a plain `authorized_keys`
-> line is easier to audit and revoke per-node than a tailnet-wide policy
-> change. Revisit if the node count grows past a handful.
+> **Fallback for non-Tailscale-SSH nodes** (or if Tailscale SSH is ever
+> turned off): classic key-based sshd. A dedicated keypair already exists
+> on the central server for this (`~/.ssh/id_ed25519_lab_pi`, comment
+> `lab-agents@sdl2-server-gaia`); install with
+> `ssh-copy-id -i ~/.ssh/id_ed25519_lab_pi.pub sdl2@<node>` — optionally
+> source-restricted in `authorized_keys` with `from="100.64.254.6"` — and
+> add `IdentityFile ~/.ssh/id_ed25519_lab_pi` + `IdentitiesOnly yes` to the
+> node's Host alias. Note Tailscale SSH intercepts tailnet port 22 while
+> enabled, so `authorized_keys` entries are inert until it is disabled.
 
 ## Ground rules for agents on this channel
 
