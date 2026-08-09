@@ -7,36 +7,41 @@ them for diagnostics and deploys: the 2026-08-08 nightly-unreachability
 investigation and the pending metric-rename deploy both required exactly
 this. This document is the durable recipe.
 
-## Access model — Tailscale SSH (what the nodes actually run)
+## Access model — second-port key auth (why not port 22)
 
-Discovered during enrollment (2026-08-08): the sensor Pis run **Tailscale
-SSH** — `tailscaled` intercepts tailnet connections to port 22 and
-authenticates by **tailnet identity + ACL**, not `authorized_keys`. A
+The sensor Pis run **Tailscale SSH**: `tailscaled` intercepts every tailnet
+connection to **port 22** and authenticates by tailnet identity + ACL — a
 key-copy attempt fails with `tailnet policy does not permit you to SSH to
-this node`; a permitted identity gets a shell with no password. So access
-is granted in the tailnet policy file, not on the node:
+this node`, and `authorized_keys` is never consulted. Granting the central
+server access that way would mean editing the tailnet policy file, which we
+deliberately avoid (tailnet-wide blast radius for a two-machine need).
 
-```json
-"ssh": [
-  {
-    "action": "accept",
-    "src":    ["tag:sdl2-server-gaia"],
-    "dst":    ["tag:sdl2-devices"],
-    "users":  ["sdl2"]
-  }
-]
+The interception covers **only port 22**, so agent access runs classic
+`sshd` on a **second port (2222)** with ordinary key auth instead:
+
+- **From:** the `sdl2` user on the central server; agents inherit that
+  identity. Key: the dedicated `~/.ssh/id_ed25519_lab_pi` (comment
+  `lab-agents@sdl2-server-gaia`) — not the shared git key, so revoking
+  agent access is deleting one `authorized_keys` line per node.
+- **To:** `sdl2@<node>:2222`, key source-restricted with
+  `from="100.64.254.6"` so it only works from the central server.
+- **Unchanged:** operators keep using plain `ssh sdl2@<node>` (port 22 →
+  Tailscale SSH, identity-based, no password) exactly as before.
+- **Alias:** `~/.ssh/config` on the central server, one per node —
+
+```
+Host environ-01
+    HostName sdl2-pi0-environ-01.tail6a1dd7.ts.net
+    Port 2222
+    User sdl2
+    IdentityFile ~/.ssh/id_ed25519_lab_pi
+    IdentitiesOnly yes
+    BatchMode yes
+    ConnectTimeout 8
 ```
 
-- **`action: "accept"`**, not `"check"` — `check` demands a browser
-  re-auth, which a non-interactive agent can never complete.
-- **Scope:** `dst: tag:sdl2-devices` spans all tagged devices, but only
-  nodes running the Tailscale SSH server honor it (the Linux Pis; Windows
-  device PCs cannot serve Tailscale SSH) — so in practice this grants
-  central-server → sensor-node access as `sdl2`, which is the intent.
-- **Revocation:** delete the ACL block. Nothing to clean up on any node.
-- **Alias:** `~/.ssh/config` on the central server defines one Host alias
-  per node (`environ-01`, …) with `BatchMode yes` + `ConnectTimeout 8`, so a
-  non-interactive agent fails fast instead of hanging if policy denies it.
+`BatchMode` makes a policy/key failure exit fast instead of hanging on a
+prompt no agent can answer.
 
 ```
 Host environ-01
@@ -50,29 +55,45 @@ Host environ-01
 
 ## Enrolling a node (once per Pi)
 
-1. Confirm the node runs Tailscale SSH (they are provisioned that way):
-   `tailscale whois <pi-tailnet-ip>` from the server shows its tags;
-   an SSH attempt without policy fails with the distinctive
-   `tailnet policy does not permit you to SSH to this node`.
-2. Ensure the ACL block above exists in the tailnet policy (admin
-   console → Access Controls). Adding a node needs **no** policy change
-   as long as it carries `tag:sdl2-devices`.
-3. Add the Host alias to the central server's `~/.ssh/config` (copy the
-   block above, adjust the name), then verify non-interactively:
+1. **On the Pi** (operator session — Tailscale SSH from a permitted
+   identity, or console): open the second port and install the key.
 
    ```bash
-   ssh environ-01 true && echo OK
+   sudo tee /etc/ssh/sshd_config.d/agent-port.conf >/dev/null <<'EOF'
+   # Second port for central-server agent access: tailscaled intercepts
+   # tailnet:22 (Tailscale SSH), so key-based agent SSH comes in here.
+   Port 22
+   Port 2222
+   EOF
+   sudo sshd -t && sudo systemctl restart ssh
+
+   mkdir -p ~/.ssh && chmod 700 ~/.ssh
+   echo 'from="100.64.254.6" ssh-ed25519 <pubkey from the central server> lab-agents@sdl2-server-gaia' >> ~/.ssh/authorized_keys
+   chmod 600 ~/.ssh/authorized_keys
    ```
 
-> **Fallback for non-Tailscale-SSH nodes** (or if Tailscale SSH is ever
-> turned off): classic key-based sshd. A dedicated keypair already exists
-> on the central server for this (`~/.ssh/id_ed25519_lab_pi`, comment
-> `lab-agents@sdl2-server-gaia`); install with
-> `ssh-copy-id -i ~/.ssh/id_ed25519_lab_pi.pub sdl2@<node>` — optionally
-> source-restricted in `authorized_keys` with `from="100.64.254.6"` — and
-> add `IdentityFile ~/.ssh/id_ed25519_lab_pi` + `IdentitiesOnly yes` to the
-> node's Host alias. Note Tailscale SSH intercepts tailnet port 22 while
-> enabled, so `authorized_keys` entries are inert until it is disabled.
+2. **On the central server**: trust the host key on the new port and add
+   the Host alias (copy the block above, adjust the name):
+
+   ```bash
+   ssh-keyscan -p 2222 -H <pi-magicdns-name> >> ~/.ssh/known_hosts
+   ssh <alias> true && echo OK
+   ```
+
+3. Caveat that bit us: if the verification **times out** (rather than
+   being refused), the tailnet's network ACLs enumerate ports and 2222
+   isn't among them — that is the one case that genuinely needs a policy
+   edit (or fall back to the Tailscale-SSH ACL `ssh` block, `action:
+   "accept"`, never `"check"`).
+
+Two facts agents must know on this channel:
+
+- **Non-login PATH lacks `/usr/sbin`** — call admin tools by full path
+  (`/usr/sbin/iw`, `/usr/sbin/sshd`).
+- **`sudo` is passwordless for `sdl2` on these nodes** (stock image
+  policy, `(ALL : ALL) ALL NOPASSWD`). Agents therefore CAN restart
+  services and edit system config — which is exactly why the ground
+  rules below are load-bearing rather than decorative.
 
 ## Ground rules for agents on this channel
 
