@@ -90,10 +90,13 @@ Two facts agents must know on this channel:
 
 - **Non-login PATH lacks `/usr/sbin`** — call admin tools by full path
   (`/usr/sbin/iw`, `/usr/sbin/sshd`).
-- **`sudo` is passwordless for `sdl2` on these nodes** (stock image
-  policy, `(ALL : ALL) ALL NOPASSWD`). Agents therefore CAN restart
-  services and edit system config — which is exactly why the ground
-  rules below are load-bearing rather than decorative.
+- **`sudo` requires a password** — and beware the trap that fooled us:
+  `sudo` here uses a **global timestamp cache**, so for ~15 minutes after
+  any operator types their sudo password in *any* session, an agent's
+  `sudo -n` succeeds too. Do not conclude NOPASSWD from one probe.
+  Under BatchMode an expired cache fails fast ("a password is required"),
+  which is correct: privileged steps (service restarts, config writes)
+  go back to a human unless a targeted NOPASSWD line is ever granted.
 
 ## Ground rules for agents on this channel
 
