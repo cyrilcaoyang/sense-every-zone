@@ -3,8 +3,8 @@
 **Purpose.** The sensor Pis (`sdl2-pi0-environ-01`, `-02`, …) are deployed
 headless on the tailnet. Coding agents running on the central server
 (`sdl2-server-gaia`) — Hermes, Claude Code — need non-interactive SSH to
-them for diagnostics and deploys: the 2026-08-08 nightly-unreachability
-investigation and the pending metric-rename deploy both required exactly
+them for diagnostics and deploys: the 2026-08-08 unreachability
+investigation (root-caused 2026-08-11) and the pending metric-rename deploy both required exactly
 this. This document is the durable recipe.
 
 ## Access model — second-port key auth (why not port 22)
@@ -104,7 +104,9 @@ Inherited from the lab's `AGENTS.md` conventions; this list is the
 node-specific application:
 
 - **Diagnostics freely**: `journalctl`, `systemctl status`, `iw`, `ping`,
-  `tailscale status`, reading configs. Anything read-only.
+  `tailscale status`, reading configs. Anything read-only. `journalctl`
+  needs the `sdl2` account in the `systemd-journal` group — granted on
+  `environ-01` 2026-08-11; provisioning item 3 covers new nodes.
 - **Service restarts and deploys only on explicit human request** — the
   standard deploy is:
 
@@ -122,12 +124,75 @@ node-specific application:
 
 ## Node network-reliability provisioning (apply to every new node)
 
-Installed on `environ-01` on 2026-08-08 while diagnosing ~10 h nightly
-unreachability windows (54.7 % two-day uptime; the Pi itself never went
-down — `uptime_seconds` sailed through, battery steady at 90 %). Root
-cause consistent with Pi Zero Wi-Fi power-save going dormant during quiet
-lab hours; these nodes are **DERP-relay-only** (no direct tailnet path), so
-one stale Wi-Fi association / NAT session makes them fully unreachable.
+First installed on `environ-01` 2026-08-08; **root cause corrected
+2026-08-11** after the drops continued unchanged. Items 1–2 below were aimed
+at a cause that is not the one operating here — they are kept because they
+are cheap and harmless, not because they fixed anything. Item 3 needed a
+correction to work at all. Item 4 addresses the actual failure.
+
+### The actual failure: the campus DHCP lease expires and NM never re-leases
+
+`env_hte` alternated **~10 h 30 m reachable / ~10 h 40 m unreachable** at
+56.3 % availability (4 929 of 8 760 expected samples over six days). The
+driver is the `compsci` lease time — `dhcp_lease_time = 37800` s, which is
+exactly 10 h 30 m. Every reachable phase matches it to within the 60 s
+dashboard poll:
+
+| reachable phase began (UTC) | duration | vs. 37 800 s |
+|---|---|---|
+| 2026-08-07 10:14:59 | 10h29m45s | −15 s |
+| 2026-08-08 07:25:27 | 10h29m57s | −3 s |
+| 2026-08-09 04:37:12 | 10h29m50s | −10 s |
+| 2026-08-10 01:47:51 | 10h30m42s | +42 s |
+
+Recovery coincides with lease acquisition to the second: the lease issued at
+`2026-08-10 22:58:58Z` was followed by the dashboard seeing the node at
+`22:59:14Z`, 16 s later.
+
+At expiry the node loses IPv4 reachability and NetworkManager then does
+nothing. The journal signature is unmistakable:
+
+- `tailscaled` loops on `connect: network is unreachable` — ENETUNREACH.
+  This is *not* a DERP, Wi-Fi, or tailnet problem, however much the
+  tailscaled spam makes it look like one. **Note what ENETUNREACH does and
+  does not prove:** it means there is no route to the destination, which
+  fits *both* "the address was removed" and "the address is still configured
+  but the default route is gone". Do not assume the former — the watchdog
+  trigger below depends on which it is, and that has not yet been observed
+  directly.
+- **NetworkManager logs nothing whatsoever.** Across a 42-minute sample of
+  one outage: 10 773 tailscaled lines, 129 cron lines, **0 from
+  NetworkManager**. It is not retrying, failing, or backing off — it has
+  stopped asking.
+
+When it does ask, the campus DHCP server answers in ~400 ms:
+
+    18:58:58  dhcp4 (wlan0): activation: beginning transaction
+    18:58:58  dhcp4 (wlan0): state changed no lease
+    18:58:59  dhcp4 (wlan0): state changed new lease, address=172.31.35.242
+
+Nothing upstream is refusing the node. The outage is entirely NM failing to
+re-acquire.
+
+### Ruled out — do not re-investigate these
+
+- **Wi-Fi power-save** (the 2026-08-08 hypothesis). Confirmed `off`, and the
+  drops continued on the same schedule. The link is pristine throughout:
+  −47 dBm, 72.2 Mbit/s, 0 RX/TX errors over 3.3 M packets.
+- **"Nightly" / quiet-hours / AP client-idle policy.** The period is a
+  free-running **21 h 10 m** that drifts ~2 h 50 m earlier each day. The
+  2026-08-10 window fell at 08:18–18:59 EDT, squarely in working hours. The
+  "nightly" reading was an artifact of a two-day sample.
+- **The PiSugar battery HAT / power.** Node uptime ran 11 days across every
+  outage, so it never lost power or rebooted; the service process uptime ran
+  continuously with it; and the battery read a flat 90–91 % throughout,
+  including the samples immediately before and after each drop. The steady
+  90 % is the HAT's normal charge plateau, not a fault.
+- **The keepalive (item 2).** It cannot help by construction — it only pings,
+  and during the outage there is no route for the ping to take. It neither
+  detects nor repairs.
+
+### The steps
 
 1. **Wi-Fi power-save off**, persisted (NetworkManager images):
 
@@ -139,14 +204,21 @@ one stale Wi-Fi association / NAT session makes them fully unreachable.
    EOF
    ```
 
-2. **Keepalive** — keeps the association and the DERP/NAT path warm:
+2. **Keepalive** — keeps the association warm. Does *not* address the DHCP
+   failure above; see "Ruled out".
 
    ```bash
    ( crontab -l 2>/dev/null; echo '* * * * * /usr/bin/ping -c 3 -W 2 100.64.254.6 >/dev/null 2>&1' ) | crontab -
    ```
 
-3. **Persistent journal** (the first incident left no evidence — the
-   default volatile journal had rotated it away):
+3. **Persistent journal + agent read access.** The drop-in alone is **not
+   sufficient**: Raspberry Pi OS ships
+   `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with
+   `Storage=volatile`, and journald keeps writing to `/run` until explicitly
+   flushed. The 2026-08-08 install therefore had no effect —
+   `/var/log/journal/` stayed empty for three days and the next incident's
+   evidence rotated away again (volatile journal ≈ 8 MB ≈ 5.5 h, and
+   tailscaled's ENETUNREACH spam burns through it fast).
 
    ```bash
    sudo mkdir -p /etc/systemd/journald.conf.d
@@ -155,10 +227,83 @@ one stale Wi-Fi association / NAT session makes them fully unreachable.
    Storage=persistent
    SystemMaxUse=64M
    EOF
+   sudo journalctl --flush            # the step that was missing
    sudo systemctl restart systemd-journald
+   ls /var/log/journal/               # MUST show a machine-id directory
+   sudo usermod -aG systemd-journal sdl2   # agents can read it without sudo
    ```
 
-Verification of the power-save fix is empirical (does the node survive the
-quiet hours?); status as of 2026-08-08: installed, first overnight result
-pending. If drops persist with all three in place, suspect the AP's
-client-idle policy, not the node.
+4. **DHCP watchdog** (installed on `environ-01` 2026-08-11). Fires only when
+   `wlan0` has no IPv4 address, so a central-server or DERP outage can never
+   bounce a healthy link.
+
+   > **It did not work on its first live test — do not assume this step is
+   > effective.** The 2026-08-11 05:29:22 EDT expiry (predicted 05:28:58,
+   > 24 s out — the lease diagnosis is solid) took the node offline and the
+   > watchdog did *not* bring it back; it was still unreachable ~4 h later.
+   > Leading suspicion is the trigger: it keys on the IPv4 address being
+   > absent, but the only directly observed symptom is ENETUNREACH, which
+   > also fits address-retained / default-route-gone. In that case the
+   > trigger never becomes true and the script never runs — and because it
+   > only writes to its log when it acts, that failure is silent and looks
+   > identical to "cron never fired". A revised version should key on the
+   > **default route**, and should log every check, not just the ones that
+   > act. Confirm against `/var/log/wlan-dhcp-watchdog.log` and the journal
+   > once the node is reachable.
+
+   ```bash
+   sudo tee /usr/local/sbin/wlan-dhcp-watchdog.sh >/dev/null <<'EOF'
+   #!/bin/sh
+   LOG=/var/log/wlan-dhcp-watchdog.log
+   ip -4 addr show wlan0 2>/dev/null | grep -q 'inet ' && exit 0
+   echo "$(date -Is) no IPv4 on wlan0 -- forcing reconnect" >>"$LOG"
+   /usr/bin/nmcli device reconnect wlan0 >>"$LOG" 2>&1
+   sleep 5
+   if ip -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then
+       echo "$(date -Is) recovered: $(ip -4 -br addr show wlan0)" >>"$LOG"
+   else
+       echo "$(date -Is) STILL no IPv4 after reconnect" >>"$LOG"
+   fi
+   EOF
+   sudo chmod 0755 /usr/local/sbin/wlan-dhcp-watchdog.sh
+
+   printf '%s\n' 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+     '*/2 * * * * root /usr/local/sbin/wlan-dhcp-watchdog.sh' \
+     | sudo tee /etc/cron.d/wlan-dhcp-watchdog >/dev/null
+   sudo chmod 0644 /etc/cron.d/wlan-dhcp-watchdog
+   ```
+
+   Verify a real execution — a malformed `cron.d` file is silently ignored,
+   and grepping the journal for the bare script name will match your own
+   `sudo` audit lines, so match the `CMD` record:
+
+   ```bash
+   journalctl --since '-10 min' | grep -E 'CRON.*CMD.*wlan-dhcp-watchdog'
+   cat /var/log/wlan-dhcp-watchdog.log     # absent while the link is healthy
+   ```
+
+### Still open
+
+- **The watchdog does not currently work** (see item 4). Fix the trigger,
+  and add a heartbeat line per check so a non-firing watchdog is
+  distinguishable from a watchdog that never ran.
+- **The watchdog is a mitigation, not a root-cause fix.** *Why* NM stops
+  re-acquiring after expiry is still unknown — the first captured expiry had
+  already rotated out of the volatile journal. Item 3 is now genuinely
+  fixed, so the 2026-08-11 05:29 expiry **is** in the persistent journal;
+  diagnose from that rather than guessing.
+- **Watch for the watchdog having made things worse.** Historically the node
+  self-recovered after ~10 h 40 m. If a `nmcli device reconnect` left the
+  connection down in a way NM will not retry, it could now stay off past
+  that. If it has not returned by roughly expiry + 11 h, it needs a physical
+  visit.
+- **Durable fix:** a DHCP reservation for the node's MAC from campus IT
+  (`environ-01` is `2c:cf:67:e8:9a:4c`), or move the nodes onto a lab AP.
+  Either removes the expiry cliff entirely, and a lab AP would likely also
+  give a direct tailnet path instead of DERP relay.
+- **Cap tailscaled's log volume.** 10 773 lines in 42 minutes during an
+  outage is what destroyed the first two incidents' evidence.
+- One unexplained single event, low priority:
+  `conflict detected for IP address 172.31.35.242 with host 00:00:00:00:00:00`
+  — zero-MAC sender, most likely the network's own duplicate-address probe
+  rather than a real squatter.
