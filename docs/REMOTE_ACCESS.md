@@ -134,10 +134,13 @@ correction to work at all. Item 4 addresses the actual failure.
 
 `env_hte` alternated **~10 h 30 m reachable / ~10 h 40 m unreachable** at
 56.3 % availability (4 929 of 8 760 expected samples over six days). The
-driver is the `compsci` lease time. **It is not a constant** — the node was
-issued 37800 s (10 h 30 m) through 2026-08-10 and 43200 s (12 h) on
-2026-08-11, so read it from the device rather than assuming a value:
-`nmcli -f DHCP4 device show wlan0 | grep lease_time`. Against the 37800 s
+driver is the `compsci` lease. **Read `expiry`, not `lease_time`** —
+`lease_time` is the seconds *remaining*, so a renewal of an existing binding
+reports a smaller number against the same absolute end (observed 2026-08-11:
+43200 s at 10:36 and 33659 s at 13:16, both landing at ~22:36 EDT). The
+underlying grant has also differed across days — 37800 s (10 h 30 m) through
+2026-08-10, 43200 s (12 h) on 2026-08-11 — so never assume a value:
+`nmcli -f DHCP4 device show wlan0 | grep -E 'lease_time|expiry'`. Against the 37800 s
 lease, every reachable phase matched it to within the 60 s dashboard poll:
 
 | reachable phase began (UTC) | duration | vs. 37 800 s |
@@ -264,8 +267,15 @@ re-acquire.
    > was power-cycled at 10:36. The lesson is narrow and worth keeping: the
    > watchdog logged the failure 153 times and nobody was reading, so v3
    > verifies its repair verb exists via `--check` instead of assuming it.
-   > v3 has not yet survived a real expiry — treat this step as unproven
-   > until it has.
+   > **v3 is proven for the induced case.** On 2026-08-11 at 13:16 a manual
+   > `nmcli connection up compsci` tore the link down; cron fired the
+   > watchdog two seconds later, which detected `addr=no route=no`, ran its
+   > own `nmcli connection up compsci`, and logged `recovered:` at 13:16:11
+   > — detection to restored default route in **10 s**, unattended. (It also
+   > superseded the manual activation, which is why that command returned
+   > "base network connection was interrupted": the watchdog won the race.)
+   > What is still untested is the *unattended lease-expiry* path, since an
+   > induced teardown is not the same event.
 
    v1 was also **silent unless it acted**, which made "the trigger never
    became true" indistinguishable from "cron never ran it". v2 separates the
@@ -285,10 +295,9 @@ re-acquire.
 
 ### Still open
 
-- **The watchdog is unproven** (see item 4). v3 fixes the repair verb, and
-  its branches — including a regression guard asserting `--check` catches a
-  missing subcommand — are covered by a stubbed harness, but no build has
-  yet survived a real lease expiry. The next one is the test.
+- **The watchdog is proven against an induced teardown, not yet against a
+  real expiry** (see item 4). v3 recovered a manually-broken link in 10 s on
+  2026-08-11. A lease expiry may differ — that is the outstanding test.
 - **The watchdog is a mitigation, not a root-cause fix.** *Why* NM stops
   re-acquiring after expiry is still unknown — the first captured expiry had
   already rotated out of the volatile journal. Item 3 is now genuinely
