@@ -134,9 +134,11 @@ correction to work at all. Item 4 addresses the actual failure.
 
 `env_hte` alternated **~10 h 30 m reachable / ~10 h 40 m unreachable** at
 56.3 % availability (4 929 of 8 760 expected samples over six days). The
-driver is the `compsci` lease time — `dhcp_lease_time = 37800` s, which is
-exactly 10 h 30 m. Every reachable phase matches it to within the 60 s
-dashboard poll:
+driver is the `compsci` lease time. **It is not a constant** — the node was
+issued 37800 s (10 h 30 m) through 2026-08-10 and 43200 s (12 h) on
+2026-08-11, so read it from the device rather than assuming a value:
+`nmcli -f DHCP4 device show wlan0 | grep lease_time`. Against the 37800 s
+lease, every reachable phase matched it to within the 60 s dashboard poll:
 
 | reachable phase began (UTC) | duration | vs. 37 800 s |
 |---|---|---|
@@ -154,12 +156,11 @@ nothing. The journal signature is unmistakable:
 
 - `tailscaled` loops on `connect: network is unreachable` — ENETUNREACH.
   This is *not* a DERP, Wi-Fi, or tailnet problem, however much the
-  tailscaled spam makes it look like one. **Note what ENETUNREACH does and
-  does not prove:** it means there is no route to the destination, which
-  fits *both* "the address was removed" and "the address is still configured
-  but the default route is gone". Do not assume the former — the watchdog
-  trigger below depends on which it is, and that has not yet been observed
-  directly.
+  tailscaled spam makes it look like one. ENETUNREACH by itself only says
+  "no route to destination", which fits both "the address was removed" and
+  "the address is retained but the default route is gone" — **the 2026-08-11
+  expiry settled it: the address is removed.** `ip -4 addr show wlan0` has no
+  `inet` line for the whole outage.
 - **NetworkManager logs nothing whatsoever.** Across a 42-minute sample of
   one outage: 10 773 tailscaled lines, 129 cron lines, **0 from
   NetworkManager**. It is not retrying, failing, or backing off — it has
@@ -253,14 +254,18 @@ re-acquire.
    5 consecutive failed reconnects it escalates once to restarting
    NetworkManager.
 
-   > **v1 failed its first live test; v2 has not yet had one.** v1 keyed the
-   > trigger on the *address* being absent. That was an over-read of the only
-   > symptom actually observed — tailscaled looping on ENETUNREACH — which
-   > fits **both** "address removed" and "address retained, default route
-   > gone". The 2026-08-11 05:29:22 EDT expiry (predicted 05:28:58, 24 s out
-   > — the lease diagnosis itself is solid) took the node offline and v1 did
-   > not bring it back. v2 widens the trigger to cover both, but until an
-   > expiry has been survived, treat this step as unproven.
+   > **v1 failed its first live test, and not for the reason first assumed.**
+   > Its *trigger* was correct: it fired at 05:30:01, 39 s into the
+   > 2026-08-11 05:29:22 EDT expiry, and 152 more times over the next five
+   > hours. The *repair* was the bug — it ran `nmcli device reconnect`, which
+   > is not a subcommand nmcli has ever had (1.52.1 offers
+   > `connect | disconnect | reapply`). Every attempt died on `Error:
+   > argument 'reconnect' not understood` and the node stayed down until it
+   > was power-cycled at 10:36. The lesson is narrow and worth keeping: the
+   > watchdog logged the failure 153 times and nobody was reading, so v3
+   > verifies its repair verb exists via `--check` instead of assuming it.
+   > v3 has not yet survived a real expiry — treat this step as unproven
+   > until it has.
 
    v1 was also **silent unless it acted**, which made "the trigger never
    became true" indistinguishable from "cron never ran it". v2 separates the
@@ -280,20 +285,22 @@ re-acquire.
 
 ### Still open
 
-- **The watchdog is unproven** (see item 4). v2 fixed the trigger and the
-  silent-when-idle problem, and its branches are covered by a stubbed test
-  harness, but no v2 build has yet survived a real lease expiry. The next
-  one is the test.
+- **The watchdog is unproven** (see item 4). v3 fixes the repair verb, and
+  its branches — including a regression guard asserting `--check` catches a
+  missing subcommand — are covered by a stubbed harness, but no build has
+  yet survived a real lease expiry. The next one is the test.
 - **The watchdog is a mitigation, not a root-cause fix.** *Why* NM stops
   re-acquiring after expiry is still unknown — the first captured expiry had
   already rotated out of the volatile journal. Item 3 is now genuinely
   fixed, so the 2026-08-11 05:29 expiry **is** in the persistent journal;
   diagnose from that rather than guessing.
-- **Watch for the watchdog having made things worse.** Historically the node
-  self-recovered after ~10 h 40 m. If a `nmcli device reconnect` left the
-  connection down in a way NM will not retry, it could now stay off past
-  that. If it has not returned by roughly expiry + 11 h, it needs a physical
-  visit.
+- **Does the node still need the DERP relay?** After the 2026-08-11 power
+  cycle it came up with a *direct* tailnet path (`direct
+  172.31.35.242:41641`) rather than relay `tor`. If that holds, one premise
+  of the original 2026-08-08 note — that these nodes are DERP-only — is no
+  longer true, and the tailscaled log spam that destroyed two incidents'
+  evidence should fall away with it. Worth re-checking after the next
+  expiry.
 - **Durable fix:** a DHCP reservation for the node's MAC from campus IT
   (`environ-01` is `2c:cf:67:e8:9a:4c`), or move the nodes onto a lab AP.
   Either removes the expiry cliff entirely, and a lab AP would likely also

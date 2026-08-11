@@ -5,11 +5,17 @@
 # NetworkManager does not re-acquire: the node loses IPv4 reachability and
 # stays that way for a further ~10h40m while NM logs nothing at all.
 #
-# v1 keyed the trigger on the IPv4 address being absent. That was an over-read
-# of the only symptom actually observed -- tailscaled looping on ENETUNREACH --
-# which fits BOTH "address removed" and "address retained, default route gone".
-# v1 did not fire on the 2026-08-11 05:29 EDT expiry. v2 fires when EITHER the
-# default route or the address is missing.
+# v1's TRIGGER was fine -- it fired 39 s into the 2026-08-11 05:29 EDT expiry
+# and 153 more times over the next 5 h. What was broken was the REPAIR: it ran
+# `nmcli device reconnect`, which is not a subcommand nmcli has ever had
+# (1.52.1: connect | disconnect | reapply). Every attempt died on
+# "Error: argument 'reconnect' not understood" and the node stayed down until
+# it was power-cycled. Hence --check below: the repair verb is now verified to
+# exist rather than assumed.
+#
+# v2 also widened the trigger to fire when EITHER the default route or the
+# address is missing. The address was in fact removed, so this was not the bug
+# -- but it is strictly more coverage, so it stays.
 #
 # v1 also wrote nothing unless it acted, so "trigger never became true" and
 # "cron never ran it" were indistinguishable. v2 always refreshes STATE
@@ -21,6 +27,18 @@
 set -u
 
 IFACE=${WD_IFACE:-wlan0}
+if [ "${1:-}" = "--check" ]; then
+    rc=0
+    for c in ip nmcli flock timeout date; do
+        command -v "$c" >/dev/null 2>&1 || { echo "MISSING command: $c"; rc=1; }
+    done
+    # The v1 bug, in one assertion: never assume a subcommand exists.
+    nmcli connection --help 2>&1 | grep -qw up      || { echo "MISSING: nmcli connection up"; rc=1; }
+    nmcli device     --help 2>&1 | grep -qw connect || { echo "MISSING: nmcli device connect"; rc=1; }
+    [ "$(id -u)" = 0 ] || echo "WARN: not root -- repair actions will fail with insufficient privileges"
+    [ "$rc" = 0 ] && echo "selfcheck: OK"
+    exit "$rc"
+fi
 LOG=${WD_LOG:-/var/log/wlan-dhcp-watchdog.log}
 STATE=${WD_STATE:-/run/wlan-dhcp-watchdog.state}
 FAILS=${WD_FAILS:-/run/wlan-dhcp-watchdog.fails}
@@ -58,12 +76,20 @@ n=$((n + 1))
 echo "$n" >"$FAILS"
 
 if [ "$n" -ge "$MAX_RECONNECT_TRIES" ]; then
-    log "attempt $n: reconnect is not working -- restarting NetworkManager"
+    log "attempt $n: re-activation is not working -- restarting NetworkManager"
     timeout 60 systemctl restart NetworkManager >>"$LOG" 2>&1
     echo 0 >"$FAILS"
 else
-    log "attempt $n: addr=$a route=$r -- nmcli device reconnect $IFACE"
-    timeout 60 nmcli device reconnect "$IFACE" >>"$LOG" 2>&1
+    # Re-activate the profile: that re-runs the DHCP transaction. Derived at
+    # runtime rather than hardcoding 'compsci', so this is not node-specific.
+    profile=$(nmcli -g GENERAL.CONNECTION device show "$IFACE" 2>/dev/null)
+    if [ -n "$profile" ]; then
+        log "attempt $n: addr=$a route=$r -- nmcli connection up $profile"
+        timeout 60 nmcli connection up "$profile" >>"$LOG" 2>&1
+    else
+        log "attempt $n: addr=$a route=$r -- no active profile, nmcli device connect $IFACE"
+        timeout 60 nmcli device connect "$IFACE" >>"$LOG" 2>&1
+    fi
 fi
 
 sleep 8
