@@ -233,60 +233,57 @@ re-acquire.
    sudo usermod -aG systemd-journal sdl2   # agents can read it without sudo
    ```
 
-4. **DHCP watchdog** (installed on `environ-01` 2026-08-11). Fires only when
-   `wlan0` has no IPv4 address, so a central-server or DERP outage can never
-   bounce a healthy link.
-
-   > **It did not work on its first live test — do not assume this step is
-   > effective.** The 2026-08-11 05:29:22 EDT expiry (predicted 05:28:58,
-   > 24 s out — the lease diagnosis is solid) took the node offline and the
-   > watchdog did *not* bring it back; it was still unreachable ~4 h later.
-   > Leading suspicion is the trigger: it keys on the IPv4 address being
-   > absent, but the only directly observed symptom is ENETUNREACH, which
-   > also fits address-retained / default-route-gone. In that case the
-   > trigger never becomes true and the script never runs — and because it
-   > only writes to its log when it acts, that failure is silent and looks
-   > identical to "cron never fired". A revised version should key on the
-   > **default route**, and should log every check, not just the ones that
-   > act. Confirm against `/var/log/wlan-dhcp-watchdog.log` and the journal
-   > once the node is reachable.
+4. **DHCP watchdog.** Source of truth is
+   [`deploy/wlan-dhcp-watchdog.sh`](../deploy/wlan-dhcp-watchdog.sh) and
+   [`deploy/wlan-dhcp-watchdog.cron`](../deploy/wlan-dhcp-watchdog.cron) in
+   this repo — install those rather than pasting from here, so the node and
+   the repo cannot drift.
 
    ```bash
-   sudo tee /usr/local/sbin/wlan-dhcp-watchdog.sh >/dev/null <<'EOF'
-   #!/bin/sh
-   LOG=/var/log/wlan-dhcp-watchdog.log
-   ip -4 addr show wlan0 2>/dev/null | grep -q 'inet ' && exit 0
-   echo "$(date -Is) no IPv4 on wlan0 -- forcing reconnect" >>"$LOG"
-   /usr/bin/nmcli device reconnect wlan0 >>"$LOG" 2>&1
-   sleep 5
-   if ip -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then
-       echo "$(date -Is) recovered: $(ip -4 -br addr show wlan0)" >>"$LOG"
-   else
-       echo "$(date -Is) STILL no IPv4 after reconnect" >>"$LOG"
-   fi
-   EOF
-   sudo chmod 0755 /usr/local/sbin/wlan-dhcp-watchdog.sh
-
-   printf '%s\n' 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
-     '*/2 * * * * root /usr/local/sbin/wlan-dhcp-watchdog.sh' \
-     | sudo tee /etc/cron.d/wlan-dhcp-watchdog >/dev/null
-   sudo chmod 0644 /etc/cron.d/wlan-dhcp-watchdog
+   scp deploy/wlan-dhcp-watchdog.sh environ-01:/tmp/
+   ssh environ-01 'sudo install -m 0755 -o root -g root /tmp/wlan-dhcp-watchdog.sh /usr/local/sbin/ && rm /tmp/wlan-dhcp-watchdog.sh'
+   scp deploy/wlan-dhcp-watchdog.cron environ-01:/tmp/
+   ssh environ-01 'sudo install -m 0644 -o root -g root /tmp/wlan-dhcp-watchdog.cron /etc/cron.d/wlan-dhcp-watchdog && rm /tmp/wlan-dhcp-watchdog.cron'
    ```
 
-   Verify a real execution — a malformed `cron.d` file is silently ignored,
-   and grepping the journal for the bare script name will match your own
-   `sudo` audit lines, so match the `CMD` record:
+   It fires when **either** the default route or the IPv4 address on `wlan0`
+   is missing, and only then — so a central-server or DERP outage can never
+   bounce a healthy link. `flock` serialises runs (nmcli can block and cron
+   fires every 2 min), each attempt is capped with `timeout 60`, and after
+   5 consecutive failed reconnects it escalates once to restarting
+   NetworkManager.
+
+   > **v1 failed its first live test; v2 has not yet had one.** v1 keyed the
+   > trigger on the *address* being absent. That was an over-read of the only
+   > symptom actually observed — tailscaled looping on ENETUNREACH — which
+   > fits **both** "address removed" and "address retained, default route
+   > gone". The 2026-08-11 05:29:22 EDT expiry (predicted 05:28:58, 24 s out
+   > — the lease diagnosis itself is solid) took the node offline and v1 did
+   > not bring it back. v2 widens the trigger to cover both, but until an
+   > expiry has been survived, treat this step as unproven.
+
+   v1 was also **silent unless it acted**, which made "the trigger never
+   became true" indistinguishable from "cron never ran it". v2 separates the
+   two: `/run/wlan-dhcp-watchdog.state` is overwritten every run (liveness,
+   never grows) and `/var/log/wlan-dhcp-watchdog.log` is appended only on a
+   state change or an action. Thirty healthy runs produce one log line.
+
+   Verify a real execution. A malformed `cron.d` file is silently ignored,
+   and grepping the journal for the bare script name matches your own `sudo`
+   audit lines — match the `CMD` record instead:
 
    ```bash
    journalctl --since '-10 min' | grep -E 'CRON.*CMD.*wlan-dhcp-watchdog'
-   cat /var/log/wlan-dhcp-watchdog.log     # absent while the link is healthy
+   cat /run/wlan-dhcp-watchdog.state    # must be timestamped within 2 min
+   cat /var/log/wlan-dhcp-watchdog.log  # state changes + actions only
    ```
 
 ### Still open
 
-- **The watchdog does not currently work** (see item 4). Fix the trigger,
-  and add a heartbeat line per check so a non-firing watchdog is
-  distinguishable from a watchdog that never ran.
+- **The watchdog is unproven** (see item 4). v2 fixed the trigger and the
+  silent-when-idle problem, and its branches are covered by a stubbed test
+  harness, but no v2 build has yet survived a real lease expiry. The next
+  one is the test.
 - **The watchdog is a mitigation, not a root-cause fix.** *Why* NM stops
   re-acquiring after expiry is still unknown — the first captured expiry had
   already rotated out of the volatile journal. Item 3 is now genuinely

@@ -1,0 +1,5 @@
+# Re-acquire DHCP when the campus lease expires and NetworkManager does not.
+# Installed to /etc/cron.d/wlan-dhcp-watchdog (0644 root:root).
+# See deploy/wlan-dhcp-watchdog.sh and docs/REMOTE_ACCESS.md.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/2 * * * * root /usr/local/sbin/wlan-dhcp-watchdog.sh
