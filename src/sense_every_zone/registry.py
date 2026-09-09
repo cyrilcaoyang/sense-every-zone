@@ -119,7 +119,10 @@ class SensorRegistry:
     def __init__(self, zones: List[_ZoneConfig]) -> None:
         self._zones: Dict[str, _ZoneConfig] = {z.zone_id: z for z in zones}
         self._snapshots: Dict[str, ZoneSnapshot] = {
-            z.zone_id: ZoneSnapshot(zone_id=z.zone_id, display_name=z.display_name)
+            z.zone_id: ZoneSnapshot(
+                zone_id=z.zone_id, display_name=z.display_name,
+                polled_at=0, total_count=len(z.sensors),
+            )
             for z in zones
         }
         self._polling_task: Optional[asyncio.Task] = None

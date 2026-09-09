@@ -106,14 +106,7 @@ class DependencyHealth(BaseModel):
 
 
 class ZoneHealthResponse(BaseModel):
-    """Richer ``GET /health`` body — local, not the spec ``HealthResponse``.
-
-    The spec ``HealthResponse`` is a minimal liveness check (just
-    ``status: "healthy"``); this richer model includes per-zone dependency
-    health. A response with ``ok: True`` plus extra fields is still
-    spec-conformant (the spec requires ``status: "healthy"``; richer info is
-    allowed).
-    """
+    """Service and per-zone reachability; inspect ``ok`` even on HTTP 200."""
     ok: bool
     dependencies: List[DependencyHealth] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -124,6 +117,12 @@ class ZoneHealthResponse(BaseModel):
 # spec-conformant minimal type is available as ``SpecHealthResponse`` for
 # callers that want exactly the wire shape.
 HealthResponse = ZoneHealthResponse
+
+
+class HTTPErrorResponse(BaseModel):
+    """Error response for an unavailable registry or unknown zone."""
+
+    detail: str
 
 
 class ZoneSummary(BaseModel):
@@ -162,4 +161,5 @@ __all__ = [
     "HealthResponse",
     "ZoneHealthResponse",
     "ZoneSummary",
+    "HTTPErrorResponse",
 ]

@@ -184,6 +184,15 @@ For each zone served by this process, add an entry in
 | `GET /health` | Service + sensor health |
 | `GET /zones` | List all zones (summary) |
 | `GET /zones/{zone_id}/status` | Full STATUS_SPEC v1.2 envelope |
+| `GET /agent-docs` | Markdown agent integration guide |
+| `GET /agent-docs/api-reference` | Markdown API reference |
+| `GET /llms.txt` | Agent documentation discovery |
+| `GET /openapi.json` | Machine-readable OpenAPI schema |
+| `GET /docs`, `GET /redoc` | Interactive API documentation |
+
+Full [API reference](src/sense_every_zone/api/docs/API_REFERENCE.md) and
+[agent guide](src/sense_every_zone/api/docs/AGENT_GUIDE.md) are also served by the API.
+See [repository review](docs/REPO_REVIEW.md) for prioritized improvements.
 
 ## Alphasense calibration
 
@@ -203,11 +212,11 @@ which reduces accuracy from ±2 ppm to roughly ±10 ppm.
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[api,dev]"
 pytest
 ```
 
-All 38 tests run without hardware (mock driver only).
+Tests use mock sensors and mocked hardware interfaces.
 
 ## Pi setup
 

@@ -36,6 +36,7 @@ from typing import List
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
+from .documentation import router as documentation_router
 from .logging_config import configure as _configure_logging
 from .models import (
     EQUIPMENT_KIND,
@@ -46,6 +47,7 @@ from .models import (
     EquipmentStatus,
     ErrorInfo,
     HealthResponse,
+    HTTPErrorResponse,
     MetricValue,
     ProbeResponse,
     SensorReading,
@@ -102,10 +104,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Sense Every Zone",
-    description="Environmental sensor nodes — STATUS_SPEC v1.2",
+    description="Read-only environmental sensor nodes — STATUS_SPEC v1.2. "
+    "See the [agent guide](agent-docs) and [API reference](agent-docs/api-reference).",
     version="0.2.0",
     lifespan=lifespan,
 )
+
+app.include_router(documentation_router)
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +172,8 @@ async def health():
     else:
         for zone_id in _registry.zone_ids():
             snap = _registry.latest(zone_id)
-            if snap is None or snap.total_count == 0:
+            if snap is None or snap.total_count == 0 or snap.polled_at == 0:
+                ok = False
                 deps.append(DependencyHealth(name=zone_id, ok=False, message="no readings yet"))
             elif not snap.any_healthy:
                 ok = False
@@ -195,7 +201,7 @@ async def list_zones():
     summaries = []
     for zone_id in _registry.zone_ids():
         snap = _registry.latest(zone_id)
-        if snap is None:
+        if snap is None or snap.total_count == 0 or snap.polled_at == 0:
             state = "unknown"
             alert_count = 0
         elif not snap.any_healthy:
@@ -217,7 +223,14 @@ async def list_zones():
     return summaries
 
 
-@app.get("/zones/{zone_id}/status", response_model=EquipmentStatus)
+@app.get(
+    "/zones/{zone_id}/status",
+    response_model=EquipmentStatus,
+    responses={
+        404: {"model": HTTPErrorResponse, "description": "Unknown zone ID"},
+        503: {"model": HTTPErrorResponse, "description": "Registry not initialised"},
+    },
+)
 async def zone_status(zone_id: str):
     """Full STATUS_SPEC v1.2 envelope for one zone — polled by aggregator."""
     if _registry is None:
